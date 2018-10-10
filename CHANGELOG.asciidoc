@@ -25,7 +25,6 @@ image::https://raw.githubusercontent.com/apache/tinkerpop/master/docs/static/ima
 
 This release also includes changes from <<release-3-3-3, 3.3.3>>.
 
-* Added `OptionsStrategy` to allow traversals to take arbitrary traversal-wide configurations.
 * Added text predicates.
 * Removed groovy-sql
 * Rewrote `ConnectiveStrategy` to support an arbitrary number of infix notations in a single traversal.
@@ -54,6 +53,8 @@ This release also includes changes from <<release-3-3-3, 3.3.3>>.
 * Replaced `Parameterizing.addPropertyMutations()` with `Configuring.configure()`.
 * Changed interface hierarchy for `Parameterizing` and `Mutating` interfaces as they are tightly related.
 * Introduced the `with(k,v)` and `with(k)` step modulators which can supply configuration options to `Configuring` steps.
+* Added `OptionsStrategy` to allow traversals to take arbitrary traversal-wide configurations.
+* Introduced the `with(k,v)` and `with(k)` traveral source configuration options which can supply configuration options to the traversal.
 * Added `connectedComponent()` step and related `VertexProgram`.
 * Added `supportsUpsert()` option to `VertexFeatures` and `EdgeFeatures`.
 * `min()` and `max()` now support all types implementing `Comparable`.
