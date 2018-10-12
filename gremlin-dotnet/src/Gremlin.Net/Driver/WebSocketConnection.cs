@@ -37,18 +37,15 @@ namespace Gremlin.Net.Driver
         private const WebSocketMessageType MessageType = WebSocketMessageType.Binary;
         private readonly Guid _id = Guid.NewGuid();
         private readonly ClientWebSocket _client;
-        private static readonly ILogger _logger;
+        private readonly ILogger _logger;
 
         static WebSocketConnection()
         {
-            var loggerFactory = new LoggerFactory()
-                .AddConsole(includeScopes: true);
-
-            _logger = _logger ?? loggerFactory.CreateLogger("WebSocketConnection");
         }
 
         public WebSocketConnection(Action<ClientWebSocketOptions> webSocketConfiguration)
         {
+            _logger = GremlinServer.GremlinLogger;
             _client = new ClientWebSocket();
             webSocketConfiguration?.Invoke(_client.Options);
         }

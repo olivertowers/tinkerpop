@@ -22,6 +22,7 @@
 #endregion
 
 using System;
+using Microsoft.Extensions.Logging;
 
 namespace Gremlin.Net.Driver
 {
@@ -30,6 +31,15 @@ namespace Gremlin.Net.Driver
     /// </summary>
     public class GremlinServer
     {
+        /// <summary>
+        /// 
+        /// </summary>
+        public static ILogger GremlinLogger
+        {
+            get;
+            set;
+        }
+
         /// <summary>
         ///     Initializes a new instance of the <see cref="GremlinServer" /> class with the specified connection parameters.
         /// </summary>
