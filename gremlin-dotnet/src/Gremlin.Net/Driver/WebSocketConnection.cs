@@ -24,8 +24,10 @@
 using System;
 using System.IO;
 using System.Net.WebSockets;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Logging;
 
 namespace Gremlin.Net.Driver
 {
@@ -33,7 +35,17 @@ namespace Gremlin.Net.Driver
     {
         private const int ReceiveBufferSize = 1024;
         private const WebSocketMessageType MessageType = WebSocketMessageType.Binary;
+        private readonly Guid _id = Guid.NewGuid();
         private readonly ClientWebSocket _client;
+        private static readonly ILogger _logger;
+
+        static WebSocketConnection()
+        {
+            var loggerFactory = new LoggerFactory()
+                .AddConsole(includeScopes: true);
+
+            _logger = _logger ?? loggerFactory.CreateLogger("WebSocketConnection");
+        }
 
         public WebSocketConnection(Action<ClientWebSocketOptions> webSocketConfiguration)
         {
@@ -43,22 +55,61 @@ namespace Gremlin.Net.Driver
 
         public async Task ConnectAsync(Uri uri)
         {
-            await _client.ConnectAsync(uri, CancellationToken.None).ConfigureAwait(false);
+            LogInfo($"Enter ConnectAsync: Uri: {uri}");
+
+            try
+            {
+                await _client.ConnectAsync(uri, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                LogWarning($"ConnectAsync: Exception: {e}");
+                throw;
+            }
+            finally
+            {
+                LogInfo($"Exit ConnectAsync");
+            }
+        }
+
+        private void LogInfo(string message)
+        {
+            _logger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : Connection: {this._id} : {message}");
+        }
+
+        private void LogWarning(string message)
+        {
+            _logger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : Connection: {this._id} : {message}");
         }
 
         public async Task CloseAsync()
         {
-            if (CloseAlreadyInitiated) return;
+            LogInfo($"Enter CloseAsync");
 
             try
             {
-                await
-                    _client.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None)
-                        .ConfigureAwait(false);
+                if (CloseAlreadyInitiated)
+                {
+                    LogInfo($"CloseAsync : Close already initiated.");
+                    return;
+                }
+
+                try
+                {
+                    await
+                        _client.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None)
+                            .ConfigureAwait(false);
+                }
+                catch (Exception e)
+                {
+                    // Swallow exceptions silently as there is nothing to do when closing fails
+                    LogWarning($"CloseAsync : Exception: {e}");
+                    throw;
+                }
             }
-            catch (Exception)
+            finally
             {
-                // Swallow exceptions silently as there is nothing to do when closing fails
+                LogInfo($"Exit CloseAsync");
             }
         }
 
@@ -68,24 +119,60 @@ namespace Gremlin.Net.Driver
 
         public async Task SendMessageAsync(byte[] message)
         {
-            await
-                _client.SendAsync(new ArraySegment<byte>(message), MessageType, true, CancellationToken.None)
-                    .ConfigureAwait(false);
+            LogInfo($"Enter SendMessageAsync");
+
+            try
+            {
+                string messageString = Encoding.UTF8.GetString(message);
+                LogInfo($"SendMessageAsync: Message: {messageString}");
+
+                await
+                    _client.SendAsync(new ArraySegment<byte>(message), MessageType, true, CancellationToken.None)
+                        .ConfigureAwait(false);
+            }
+            catch (Exception e)
+            {
+                LogWarning($"SendMessageAsync : Exception: {e}");
+                throw;
+            }
+            finally
+            {
+                LogInfo($"Exit SendMessageAsync");
+            }
         }
 
         public async Task<byte[]> ReceiveMessageAsync()
         {
-            using (var ms = new MemoryStream())
-            {
-                WebSocketReceiveResult received;
-                do
-                {
-                    var receiveBuffer = new ArraySegment<byte>(new byte[ReceiveBufferSize]);
-                    received = await _client.ReceiveAsync(receiveBuffer, CancellationToken.None).ConfigureAwait(false);
-                    ms.Write(receiveBuffer.Array, receiveBuffer.Offset, received.Count);
-                } while (!received.EndOfMessage);
+            LogInfo($"Enter ReceiveMessageAsync");
 
-                return ms.ToArray();
+            try
+            {
+                using (var ms = new MemoryStream())
+                {
+                    WebSocketReceiveResult received;
+                    do
+                    {
+                        var receiveBuffer = new ArraySegment<byte>(new byte[ReceiveBufferSize]);
+                        received = await _client.ReceiveAsync(receiveBuffer, CancellationToken.None).ConfigureAwait(false);
+                        ms.Write(receiveBuffer.Array, receiveBuffer.Offset, received.Count);
+                    } while (!received.EndOfMessage);
+
+                    byte[] response = ms.ToArray();
+                    string responseAsString = Encoding.UTF8.GetString(response);
+                    int truncatedLength = Math.Min(240, responseAsString.Length);
+                    LogInfo($"ReceiveMessageAsync : Content: {responseAsString.Substring(0, truncatedLength)}...");
+
+                    return response;
+                }
+            }
+            catch (Exception e)
+            {
+                LogWarning($"ReceiveMessageAsync : Exception: {e}");
+                throw;
+            }
+            finally
+            {
+                LogInfo($"Exit ReceiveMessageAsync");
             }
         }
 
@@ -103,11 +190,25 @@ namespace Gremlin.Net.Driver
 
         protected virtual void Dispose(bool disposing)
         {
-            if (!_disposed)
+            LogInfo($"Enter Dispose");
+
+            try
             {
-                if (disposing)
-                    _client?.Dispose();
-                _disposed = true;
+                if (!_disposed)
+                {
+                    if (disposing)
+                        _client?.Dispose();
+                    _disposed = true;
+                }
+            }
+            catch (Exception e)
+            {
+                LogInfo($"ReceiveMessageAsync : Exception {e}");
+                throw;
+            }
+            finally
+            {
+                LogInfo($"Exit Dispose");
             }
         }
 

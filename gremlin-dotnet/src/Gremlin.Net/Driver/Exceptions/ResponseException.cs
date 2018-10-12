@@ -35,10 +35,12 @@ namespace Gremlin.Net.Driver.Exceptions
         /// <summary>
         ///     Initializes a new instance of the <see cref="ResponseException" /> class.
         /// </summary>
+        /// <param name="requestId">The request id.</param>
         /// <param name="statusCode">The status code returned by the server.</param>
         /// <param name="statusAttributes">The status attributes from the gremlin response.</param>
         /// <param name="message">The error message string.</param>
-        public ResponseException(ResponseStatusCode statusCode,
+        public ResponseException(Guid? requestId,
+                                 ResponseStatusCode statusCode,
                                  IReadOnlyDictionary<string, object> statusAttributes,
                                  string message) : base(message)
         {
@@ -50,6 +52,11 @@ namespace Gremlin.Net.Driver.Exceptions
         ///     Gets the status code returned from the server.
         /// </summary>
         public ResponseStatusCode StatusCode { get; }
+
+        /// <summary>
+        ///     Gets the request id.
+        /// </summary>
+        public Guid? RequestId { get; }
 
         /// <summary>
         ///     Gets the status attributes from the gremlin response

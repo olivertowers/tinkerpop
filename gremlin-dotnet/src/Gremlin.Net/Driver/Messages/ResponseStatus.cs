@@ -21,6 +21,7 @@
 
 #endregion
 
+using System;
 using System.Collections.Generic;
 using Gremlin.Net.Driver.Exceptions;
 using Newtonsoft.Json;
@@ -41,10 +42,12 @@ namespace Gremlin.Net.Driver.Messages
 
     internal static class ResponseStatusExtensions
     {
-        public static void ThrowIfStatusIndicatesError(this ResponseStatus status)
+        public static void ThrowIfStatusIndicatesError(this ResponseStatus status, Guid? requestId)
         {
             if (status.Code.IndicatesError())
-                throw new ResponseException(status.Code, status.Attributes, $"{status.Code}: {status.Message}");
+            {
+                throw new ResponseException(requestId, status.Code, status.Attributes, $"{status.Code}: {status.Message}");
+            }
         }
     }
 }

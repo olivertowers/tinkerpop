@@ -21,6 +21,7 @@
 
 #endregion
 
+using System;
 using System.Collections;
 using System.Collections.Generic;
 
@@ -41,14 +42,21 @@ namespace Gremlin.Net.Driver
         public IReadOnlyDictionary<string, object> StatusAttributes { get; }
 
         /// <summary>
+        ///     Gets the id of the original request.
+        /// </summary>
+        public Guid? RequestId { get; }
+
+        /// <summary>
         ///     Initializes a new instance of the ResultSet class for the specified data and status attributes.
         /// </summary>
+        /// <param name="requestId"></param>
         /// <param name="data"></param>
         /// <param name="attributes"></param>
-        public ResultSet(IReadOnlyCollection<T> data, IReadOnlyDictionary<string, object> attributes)
+        public ResultSet(Guid? requestId, IReadOnlyCollection<T> data, IReadOnlyDictionary<string, object> attributes)
         {
             _data = data;
             this.StatusAttributes = attributes;
+            RequestId = requestId;
         }
 
         /// <inheritdoc />

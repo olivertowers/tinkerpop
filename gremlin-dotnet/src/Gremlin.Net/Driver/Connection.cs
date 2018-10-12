@@ -88,13 +88,16 @@ namespace Gremlin.Net.Driver
             IAggregator aggregator = null;
             var isAggregatingSideEffects = false;
             var result = new List<T>();
+            Guid? requestId = null;
             do
             {
                 var received = await _webSocketConnection.ReceiveMessageAsync().ConfigureAwait(false);
                 var receivedMsg = _messageSerializer.DeserializeMessage<ResponseMessage<JToken>>(received);
 
+                requestId = receivedMsg.RequestId;
+
                 status = receivedMsg.Status;
-                status.ThrowIfStatusIndicatesError();
+                status.ThrowIfStatusIndicatesError(requestId);
 
                 if (status.Code == ResponseStatusCode.Authenticate)
                 {
@@ -127,7 +130,10 @@ namespace Gremlin.Net.Driver
             } while (status.Code == ResponseStatusCode.PartialContent || status.Code == ResponseStatusCode.Authenticate);
 
 
-            resultSet = new ResultSet<T>(isAggregatingSideEffects ? new List<T> { (T)aggregator.GetAggregatedResult() } : result, statusAttributes);
+            resultSet = new ResultSet<T>(
+                requestId,
+                isAggregatingSideEffects ? new List<T> { (T)aggregator.GetAggregatedResult() } : result,
+                statusAttributes);
                 
             return resultSet;
         }
