@@ -35,24 +35,21 @@ namespace Gremlin.Net.Driver
     {
         private const int ReceiveBufferSize = 1024;
         private const WebSocketMessageType MessageType = WebSocketMessageType.Binary;
-        private readonly Guid _id = Guid.NewGuid();
         private readonly ClientWebSocket _client;
         private readonly ILogger _logger;
-
-        static WebSocketConnection()
-        {
-        }
+        private bool _isBrokenConnection;
 
         public WebSocketConnection(Action<ClientWebSocketOptions> webSocketConfiguration)
         {
             _logger = GremlinServer.GremlinLogger;
             _client = new ClientWebSocket();
             webSocketConfiguration?.Invoke(_client.Options);
+            Id = Guid.NewGuid();
         }
 
         public async Task ConnectAsync(Uri uri)
         {
-            LogInfo($"Enter ConnectAsync: Uri: {uri}");
+            LogInfo($"Enter ConnectAsync: Uri: {uri}, ");
 
             try
             {
@@ -60,7 +57,8 @@ namespace Gremlin.Net.Driver
             }
             catch (Exception e)
             {
-                LogWarning($"ConnectAsync: Exception: {e}");
+                _isBrokenConnection = true;
+                LogWarning($"ConnectAsync: WebSocketState: {_client.State}, Exception: {e}");
                 throw;
             }
             finally
@@ -71,12 +69,12 @@ namespace Gremlin.Net.Driver
 
         private void LogInfo(string message)
         {
-            _logger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : Connection: {this._id} : {message}");
+            _logger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : Connection: {this.Id} : {message}");
         }
 
         private void LogWarning(string message)
         {
-            _logger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : Connection: {this._id} : {message}");
+            _logger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : Connection: {this.Id} : {message}");
         }
 
         public async Task CloseAsync()
@@ -99,8 +97,9 @@ namespace Gremlin.Net.Driver
                 }
                 catch (Exception e)
                 {
+                    _isBrokenConnection = true;
                     // Swallow exceptions silently as there is nothing to do when closing fails
-                    LogWarning($"CloseAsync : Exception: {e}");
+                    LogWarning($"CloseAsync : WebSocketState: {_client.State}, Exception: {e}");
                     throw;
                 }
             }
@@ -129,7 +128,8 @@ namespace Gremlin.Net.Driver
             }
             catch (Exception e)
             {
-                LogWarning($"SendMessageAsync : Exception: {e}");
+                _isBrokenConnection = true;
+                LogWarning($"SendMessageAsync : WebSocketState: {_client.State}, Exception: {e}");
                 throw;
             }
             finally
@@ -164,7 +164,8 @@ namespace Gremlin.Net.Driver
             }
             catch (Exception e)
             {
-                LogWarning($"ReceiveMessageAsync : Exception: {e}");
+                _isBrokenConnection = true;
+                LogWarning($"ReceiveMessageAsync : WebSocketState: {_client.State}, Exception: {e}");
                 throw;
             }
             finally
@@ -173,7 +174,9 @@ namespace Gremlin.Net.Driver
             }
         }
 
-        public bool IsOpen => _client.State == WebSocketState.Open;
+        public bool IsOpen => _client.State == WebSocketState.Open && !_isBrokenConnection;
+
+        public Guid Id { get; }
 
         #region IDisposable Support
 
@@ -200,7 +203,7 @@ namespace Gremlin.Net.Driver
             }
             catch (Exception e)
             {
-                LogInfo($"ReceiveMessageAsync : Exception {e}");
+                LogInfo($"ReceiveMessageAsync : WebSocketState: {_client.State}, Exception {e}");
                 throw;
             }
             finally

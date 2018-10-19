@@ -73,6 +73,8 @@ namespace Gremlin.Net.Driver
 
         public bool IsOpen => _webSocketConnection.IsOpen;
 
+        public Guid Id => _webSocketConnection.Id;
+
         private async Task SendAsync(RequestMessage message)
         {
             var graphsonMsg = _graphSONWriter.WriteObject(message);

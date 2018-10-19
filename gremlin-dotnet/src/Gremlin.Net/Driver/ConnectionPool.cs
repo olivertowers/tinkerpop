@@ -26,6 +26,7 @@ using System.Collections.Concurrent;
 using System.Linq;
 using System.Threading.Tasks;
 using Gremlin.Net.Process;
+using Microsoft.Extensions.Logging;
 
 namespace Gremlin.Net.Driver
 {
@@ -111,14 +112,40 @@ namespace Gremlin.Net.Driver
         {
             while (_connections.TryTake(out var connection))
             {
-                connection.Dispose();
+                try
+                {
+                    connection.Dispose();
+                }
+                catch (Exception e)
+                {
+                    GremlinServer.GremlinLogger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : RemoveAllConnections : ConnectionId: {connection.Id}, IsOpen: {connection.IsOpen}, " +
+                        $"Exception: {e}");
+                }
             }
         }
 
         private async Task TeardownAsync()
         {
-            await Task.WhenAll(_connections.Select(c => c.CloseAsync())).ConfigureAwait(false);
+            await Task.WhenAll(_connections.Select(c => ForceClose(c))).ConfigureAwait(false);
         }
+
+        private static Task ForceClose(Connection c)
+        {
+            GremlinServer.GremlinLogger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : ForceClose : ConnectionId: {c.Id}, IsOpen: {c.IsOpen}");
+            try
+            {
+                return c.CloseAsync();
+            }
+            catch (Exception e)
+            {
+                GremlinServer.GremlinLogger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : ForceClose : ConnectionId: {c.Id}, IsOpen: {c.IsOpen}, " +
+                    $"Exception: {e}");
+            }
+
+            return Task.CompletedTask;
+        }
+           
+        
 
         #region IDisposable Support
 

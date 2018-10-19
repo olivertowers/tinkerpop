@@ -47,6 +47,10 @@ Please see the reference documentation at Apache TinkerPop for more information 
     <RepositoryUrl>https://github.com/apache/tinkerpop</RepositoryUrl>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="11.0.2" />
     <PackageReference Include="Microsoft.CSharp" Version="4.3.0" />
