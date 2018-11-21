@@ -23,7 +23,6 @@
 
 using System;
 using System.Collections.Concurrent;
-using System.Linq;
 using System.Threading.Tasks;
 using Gremlin.Net.Process;
 using Microsoft.Extensions.Logging;
@@ -62,7 +61,12 @@ namespace Gremlin.Net.Driver
                     _connections.TryTake(out connection);
                 }
 
-                if (connection.IsOpen) return true;
+
+                if (connection.IsOpen)
+                {
+                    GremlinServer.GremlinLogger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : Connection: {connection.Id} - TryGetConnectionFromPool - Returning open connection");
+                    return true;
+                }
                 connection.Dispose();
             }
         }
@@ -103,30 +107,37 @@ namespace Gremlin.Net.Driver
         {
             lock (_connectionsLock)
             {
-                TeardownAsync().WaitUnwrap();
-                RemoveAllConnections();
+                RemoveAllConnections().WaitUnwrap();
             }
         }
 
-        private void RemoveAllConnections()
+        private async Task RemoveAllConnections()
         {
-            while (_connections.TryTake(out var connection))
+            try
             {
-                try
-                {
-                    connection.Dispose();
-                }
-                catch (Exception e)
-                {
-                    GremlinServer.GremlinLogger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : RemoveAllConnections : ConnectionId: {connection.Id}, IsOpen: {connection.IsOpen}, " +
-                        $"Exception: {e}");
-                }
-            }
-        }
+                GremlinServer.GremlinLogger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : Enter RemoveAllConnections");
 
-        private async Task TeardownAsync()
-        {
-            await Task.WhenAll(_connections.Select(c => ForceClose(c))).ConfigureAwait(false);
+                Task[] connectionRemoveTasks = new Task[_connections.Count];
+                int i = 0;
+                while (_connections.TryTake(out var connection))
+                {
+                    connectionRemoveTasks[i++] = Task.Run(async () =>
+                    {
+                        await ForceClose(connection);
+                        connection.Dispose();
+                    });
+                }
+
+                await Task.WhenAll(connectionRemoveTasks);
+            }
+            catch (Exception e)
+            {
+                GremlinServer.GremlinLogger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : RemoveAllConnections : Exception: {e}");
+            }
+            finally
+            {
+                GremlinServer.GremlinLogger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : Exit RemoveAllConnections");
+            }
         }
 
         private static Task ForceClose(Connection c)
@@ -144,8 +155,6 @@ namespace Gremlin.Net.Driver
 
             return Task.CompletedTask;
         }
-           
-        
 
         #region IDisposable Support
 

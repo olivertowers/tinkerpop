@@ -203,7 +203,7 @@ namespace Gremlin.Net.Driver
             }
             catch (Exception e)
             {
-                LogInfo($"ReceiveMessageAsync : WebSocketState: {_client.State}, Exception {e}");
+                LogInfo($"Dispose : WebSocketState: {_client.State}, Exception {e}");
                 throw;
             }
             finally

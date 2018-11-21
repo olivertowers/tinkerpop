@@ -6,6 +6,7 @@ using Gremlin.Net.Driver;
 using Gremlin.Net.Driver.Exceptions;
 using Gremlin.Net.IntegrationTest.Util;
 using Gremlin.Net.Structure.IO.GraphSON;
+using Microsoft.Extensions.Logging;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -282,7 +283,12 @@ namespace Gremlin.Net.IntegrationTest.Driver
         [Fact()]
         public async Task RunManyRequests()
         {
-            Task[] requestTasks = new Task[10];
+            Task[] requestTasks = new Task[10000];
+
+            var loggerFactory = new LoggerFactory()
+                .AddConsole();
+
+            GremlinServer.GremlinLogger = loggerFactory.CreateLogger("Gremlin.NET");
 
             var gremlinServer = new GremlinServer(TestHost, TestPort, true, UserName, Password);
             using (var gremlinClient = new GremlinClient(gremlinServer, new GraphSON2Reader(), new GraphSON2Writer(), GremlinClient.GraphSON2MimeType))
@@ -294,7 +300,7 @@ namespace Gremlin.Net.IntegrationTest.Driver
                     //await Task.Delay(1000);
                 }
 
-                var timeoutTask = Task.Delay(TimeSpan.FromMinutes(5));
+                var timeoutTask = Task.Delay(TimeSpan.FromMinutes(100));
                 if (timeoutTask == await Task.WhenAny(timeoutTask, Task.WhenAll(requestTasks)))
                 {
                     throw new InvalidOperationException("Timeout waiting for request tasks to complete.");
