@@ -57,16 +57,17 @@ namespace Gremlin.Net.Driver
                 connection = null;
                 lock (_connectionsLock)
                 {
+                    GremlinServer.GremlinLogger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool: TryGetConnectionFromPool - PoolSize:: {_connections.Count}");
                     if (_connections.IsEmpty) return false;
                     _connections.TryTake(out connection);
                 }
 
-
                 if (connection.IsOpen)
                 {
-                    GremlinServer.GremlinLogger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : Connection: {connection.Id} - TryGetConnectionFromPool - Returning open connection");
+                    GremlinServer.GremlinLogger.LogWarning($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool: TryGetConnectionFromPool - Returning open connection  {connection.Id}");
                     return true;
                 }
+
                 connection.Dispose();
             }
         }
@@ -115,7 +116,7 @@ namespace Gremlin.Net.Driver
         {
             try
             {
-                GremlinServer.GremlinLogger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : Enter RemoveAllConnections");
+                GremlinServer.GremlinLogger.LogInformation($"{DateTime.UtcNow.ToString("o")} : {Environment.CurrentManagedThreadId} : ConnectionPool : Enter RemoveAllConnections. PoolSize: {_connections.Count}");
 
                 Task[] connectionRemoveTasks = new Task[_connections.Count];
                 int i = 0;

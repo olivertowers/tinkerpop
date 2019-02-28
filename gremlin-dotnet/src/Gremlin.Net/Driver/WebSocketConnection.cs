@@ -59,7 +59,7 @@ namespace Gremlin.Net.Driver
             {
                 _isBrokenConnection = true;
                 LogWarning($"ConnectAsync: WebSocketState: {_client.State}, Exception: {e}");
-                throw;
+                throw new WebSocketException(WebSocketError.Faulted, e);
             }
             finally
             {
@@ -100,7 +100,7 @@ namespace Gremlin.Net.Driver
                     _isBrokenConnection = true;
                     // Swallow exceptions silently as there is nothing to do when closing fails
                     LogWarning($"CloseAsync : WebSocketState: {_client.State}, Exception: {e}");
-                    throw;
+                    throw new WebSocketException(WebSocketError.Faulted, e);
                 }
             }
             finally
@@ -130,7 +130,7 @@ namespace Gremlin.Net.Driver
             {
                 _isBrokenConnection = true;
                 LogWarning($"SendMessageAsync : WebSocketState: {_client.State}, Exception: {e}");
-                throw;
+                throw new WebSocketException(WebSocketError.Faulted, e);
             }
             finally
             {
@@ -166,7 +166,7 @@ namespace Gremlin.Net.Driver
             {
                 _isBrokenConnection = true;
                 LogWarning($"ReceiveMessageAsync : WebSocketState: {_client.State}, Exception: {e}");
-                throw;
+                throw new WebSocketException(WebSocketError.Faulted, e);
             }
             finally
             {

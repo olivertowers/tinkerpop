@@ -23,6 +23,7 @@
 
 using System;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gremlin.Net.Driver
 {
@@ -38,7 +39,7 @@ namespace Gremlin.Net.Driver
         {
             get;
             set;
-        }
+        } = NullLogger.Instance;
 
         /// <summary>
         ///     Initializes a new instance of the <see cref="GremlinServer" /> class with the specified connection parameters.

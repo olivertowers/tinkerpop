@@ -25,7 +25,7 @@ limitations under the License.
   </PropertyGroup>
 
   <PropertyGroup Label="Package">
-    <Version>3.4.0-log1</Version>
+    <Version>3.4.0-rc2-SNAPSHOT-a</Version>
     <FileVersion>3.4.0.0</FileVersion>
     <AssemblyVersion>3.4.0.0</AssemblyVersion>
     <Title>Gremlin.Net</Title>
@@ -42,7 +42,7 @@ Please see the reference documentation at Apache TinkerPop for more information 
     <PackageId>Gremlin.Net</PackageId>
     <PackageTags>gremlin;tinkerpop;apache</PackageTags>
     <PackageProjectUrl>http://tinkerpop.apache.org</PackageProjectUrl>
-    <PackageLicenseUrl>https://github.com/apache/tinkerpop/blob/master/LICENSE</PackageLicenseUrl>
+    <PackageLicense>https://github.com/apache/tinkerpop/blob/master/LICENSE</PackageLicense>
     <PackageIconUrl>http://tinkerpop.apache.org/docs/current/images/gremlin-dotnet-logo_256x256.png</PackageIconUrl>
     <RepositoryUrl>https://github.com/apache/tinkerpop</RepositoryUrl>
   </PropertyGroup>
