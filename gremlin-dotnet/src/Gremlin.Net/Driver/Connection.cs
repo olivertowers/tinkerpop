@@ -24,6 +24,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
@@ -55,9 +56,12 @@ namespace Gremlin.Net.Driver
 
         private readonly ConcurrentDictionary<Guid, IResponseHandlerForSingleRequestMessage> _callbackByRequestId =
             new ConcurrentDictionary<Guid, IResponseHandlerForSingleRequestMessage>();
+
         private int _connectionState = 0;
         private int _writeInProgress = 0;
+        private int _nrBorrowed = 0;
         private const int Closed = 1;
+        private long _lastUsedTimeTicks;
 
         public Connection(Uri uri, string username, string password, GraphSONReader graphSONReader,
             GraphSONWriter graphSONWriter, string mimeType, Action<ClientWebSocketOptions> webSocketConfiguration)
@@ -74,12 +78,27 @@ namespace Gremlin.Net.Driver
         public async Task ConnectAsync()
         {
             await _webSocketConnection.ConnectAsync(_uri).ConfigureAwait(false);
+            Interlocked.Exchange(ref _lastUsedTimeTicks, Stopwatch.GetTimestamp());
             BeginReceiving();
+        }
+
+        public int NrBorrowed => _nrBorrowed;
+
+        public bool TryCompareSetBorrow(int expectedValue, int newValue)
+        {
+            if (expectedValue == Interlocked.CompareExchange(ref _nrBorrowed, newValue, expectedValue))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         public int NrRequestsInFlight => _callbackByRequestId.Count;
 
         public bool IsOpen => _webSocketConnection.IsOpen;
+
+        public long LastUsedTimeTicks => Interlocked.Read(ref _lastUsedTimeTicks);
 
         public Task<ResultSet<T>> SubmitAsync<T>(RequestMessage requestMessage)
         {
@@ -104,6 +123,7 @@ namespace Gremlin.Net.Driver
                 try
                 {
                     var received = await _webSocketConnection.ReceiveMessageAsync().ConfigureAwait(false);
+                    Interlocked.Exchange(ref _lastUsedTimeTicks, Stopwatch.GetTimestamp());
                     Parse(received);
                 }
                 catch (Exception e)
@@ -186,6 +206,7 @@ namespace Gremlin.Net.Driver
                 try
                 {
                     await SendMessageAsync(msg).ConfigureAwait(false);
+                    Interlocked.Exchange(ref _lastUsedTimeTicks, Stopwatch.GetTimestamp());
                 }
                 catch (Exception e)
                 {
