@@ -94,6 +94,11 @@ namespace Gremlin.Net.Driver
             return false;
         }
 
+        public int DecrementBorrowed()
+        {
+            return Interlocked.Decrement(ref _nrBorrowed);
+        }
+
         public int NrRequestsInFlight => _callbackByRequestId.Count;
 
         public bool IsOpen => _webSocketConnection.IsOpen;

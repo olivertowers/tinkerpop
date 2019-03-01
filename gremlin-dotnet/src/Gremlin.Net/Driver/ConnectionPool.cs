@@ -40,7 +40,7 @@ namespace Gremlin.Net.Driver
         private readonly int _maxInProcessPerConnection;
         private readonly EventAsync _availableConnection;
 
-        private int _nrConnections;
+        private int _opened;
         private int scheduledConnection;
     
         private TimeSpan waitForConnectionTimeout = TimeSpan.FromMinutes(1);
@@ -64,7 +64,7 @@ namespace Gremlin.Net.Driver
         {
             get
             {
-                return _nrConnections < 0 ? 0 : _nrConnections;
+                return _opened < 0 ? 0 : _opened;
             }
         }
         
@@ -166,7 +166,8 @@ namespace Gremlin.Net.Driver
 
         private async Task<Connection> BorrowConnection()
         {
-            Connection leastUsedConn = SelectLeastUsedConnection2();
+            var deadConnections = new List<Connection>();
+            Connection leastUsedConn = SelectLeastUsedConnection2(deadConnections);
 
             if (_connections.Count == 0)
             {
@@ -183,8 +184,14 @@ namespace Gremlin.Net.Driver
             }
 
             int currentPoolSize = _connections.Count;
-            if (leastUsedConn.NrBorrowed >= _maxInProcessPerConnection && currentPoolSize < _poolSize)
+            if (leastUsedConn.NrBorrowed >= _maxInProcessPerConnection && (currentPoolSize - deadConnections.Count) < _poolSize)
             {
+                // remove a dead connection to make room for a new connnection.
+                if (currentPoolSize >= _poolSize)
+                {
+                    RemoveDeadConnection(deadConnections[0]);
+                }
+
                 // least used connection is too busy and the pool is not at capacity, schedule new connection.
                 ConsiderNewConnection();
             }
@@ -200,7 +207,7 @@ namespace Gremlin.Net.Driver
 
                 if (!leastUsedConn.IsOpen)
                 {
-                    ReplaceConnection(leastUsedConn);
+                    ReplaceDeadConnection(leastUsedConn);
                     return await WaitForConnectionAsync(waitForConnectionTimeout);
                 }
 
@@ -287,7 +294,7 @@ namespace Gremlin.Net.Driver
             throw new TimeoutException($"Timed out waiting for connection after {timeout}");
         }
 
-        private Connection SelectLeastUsedConnection2()
+        private Connection SelectLeastUsedConnection2(List<Connection> deadConnections = null)
         {
             var nrMinInFlightConnections = int.MaxValue;
             var maxLastUsedTime = long.MinValue;
@@ -308,6 +315,11 @@ namespace Gremlin.Net.Driver
                         maxLastUsedTime = lastUsed;
                         leastBusy = connection;
                     }
+
+                    if (!connection.IsOpen && deadConnections != null)
+                    {
+                        deadConnections.Add(connection);
+                    }
                 }
             }
 
@@ -318,13 +330,13 @@ namespace Gremlin.Net.Driver
         {
             while (true)
             {
-                int nrOpened = _nrConnections;
+                int nrOpened = _opened;
                 if (nrOpened >= _poolSize)
                 {
                     return false;
                 }
 
-                if (Interlocked.CompareExchange(ref _nrConnections, nrOpened + 1, nrOpened) == nrOpened)
+                if (Interlocked.CompareExchange(ref _opened, nrOpened + 1, nrOpened) == nrOpened)
                 {
                     break;
                 }
@@ -343,7 +355,7 @@ namespace Gremlin.Net.Driver
             }
             catch
             {
-                Interlocked.Decrement(ref _nrConnections);
+                Interlocked.Decrement(ref _opened);
             }
 
             return false;
@@ -453,13 +465,14 @@ namespace Gremlin.Net.Driver
 
         private void ReturnConnectionIfOpen(Connection connection)
         {
+            int borrrowed = connection.DecrementBorrowed();
             if (connection.IsOpen)
             {
                 _availableConnection.Notify();
                 return;
             }
 
-            ReplaceConnection(connection);
+            ReplaceDeadConnection(connection);
         }
 
         private void ConsiderUnavailable()
@@ -467,7 +480,13 @@ namespace Gremlin.Net.Driver
             CloseAndRemoveAllConnectionsAsync().WaitUnwrap();
         }
 
-        private async void ReplaceConnection(Connection connection)
+        private void ReplaceDeadConnection(Connection connection)
+        {
+            RemoveDeadConnection(connection);
+            ConsiderNewConnection();
+        }
+
+        private async Task RemoveConnection(Connection connection)
         {
             try
             {
@@ -486,7 +505,27 @@ namespace Gremlin.Net.Driver
                 }
             }
 
-            ConsiderNewConnection();
+        }
+
+        private void RemoveDeadConnection(Connection connection)
+        {
+            if (connection.IsOpen)
+            {
+                throw new InvalidOperationException("Invalid pool state. Attempting to remove a connection which is open.");
+            }
+
+            try
+            {
+                DefinitelyDestroyConnection(connection);
+            }
+            finally
+            { 
+                lock (_connections)
+                {
+                    _connections.Remove(connection);
+                }
+            }
+
         }
 
         private async Task CloseAndRemoveAllConnectionsAsync()
@@ -518,13 +557,12 @@ namespace Gremlin.Net.Driver
         private void DefinitelyDestroyConnection(Connection connection)
         {
             connection.Dispose();
-            Interlocked.Decrement(ref _nrConnections);
+            Interlocked.Decrement(ref _opened);
         }
 
         #region IDisposable Support
 
         private bool _disposed;
-
         public void Dispose()
         {
             Dispose(true);
