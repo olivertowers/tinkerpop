@@ -39,8 +39,9 @@ namespace Gremlin.Net.Driver
         private readonly int _poolSize;
         private readonly int _maxInProcessPerConnection;
         private readonly EventAsync _availableConnection;
-
+        private const int MaxNewConnectionRate = 2;
         private int _opened;
+        private int _nrWaitingOnConnection;
         private int scheduledConnection;
     
         private TimeSpan waitForConnectionTimeout = TimeSpan.FromMinutes(1);
@@ -180,6 +181,15 @@ namespace Gremlin.Net.Driver
             {
                 // We missed getting a connection after it was populated so wait for the next available.
                 // What if the pool is populated since? This won't get notified until a deficit is detected.
+                if (deadConnections.Count > 0)
+                {
+                    foreach (var deadConn in deadConnections)
+                    {
+                        RemoveDeadConnection(deadConn);
+                    }
+                }
+
+                ConsiderNewConnection();
                 return await WaitForConnectionAsync(waitForConnectionTimeout);
             }
 
@@ -237,7 +247,7 @@ namespace Gremlin.Net.Driver
             {
                 int inCreation = scheduledConnection;
 
-                if (inCreation >= 1)
+                if (inCreation * _maxInProcessPerConnection >=  (_maxInProcessPerConnection + _nrWaitingOnConnection))
                 {
                     return;
                 }
@@ -254,7 +264,7 @@ namespace Gremlin.Net.Driver
         private void ScheduleNewConnection()
         {
             Task.Run(async () => {
-                await AddConnectionIfUnderMax();
+                await AddConnectionIfUnderMax(waitForConnectionTimeout);
                 Interlocked.Decrement(ref scheduledConnection);
             }).Forget();
         }
@@ -266,7 +276,13 @@ namespace Gremlin.Net.Driver
 
             do
             {
-                await _availableConnection.WaitAsync();
+                Interlocked.Increment(ref _nrWaitingOnConnection);
+                Task timeoutTask = Task.Delay(timeout);
+                Task waitAvailableTask = _availableConnection.WaitAsync();
+                if ((await Task.WhenAny(waitAvailableTask, timeoutTask)) != waitAvailableTask)
+                {
+                    break;
+                }
 
                 Connection leastUsedConn = SelectLeastUsedConnection2();
                 if (leastUsedConn != null) 
@@ -281,6 +297,7 @@ namespace Gremlin.Net.Driver
 
                         if (leastUsedConn.TryCompareSetBorrow(borrowed, borrowed + 1))
                         {
+                            Interlocked.Decrement(ref _nrWaitingOnConnection);
                             return leastUsedConn;
                         }
                     }
@@ -290,6 +307,7 @@ namespace Gremlin.Net.Driver
             }
             while (remaining > TimeSpan.Zero);
 
+            Interlocked.Decrement(ref _nrWaitingOnConnection);
             ConsiderUnavailable();
             throw new TimeoutException($"Timed out waiting for connection after {timeout}");
         }
@@ -326,7 +344,7 @@ namespace Gremlin.Net.Driver
             return leastBusy;
         }
 
-        private async Task<bool> AddConnectionIfUnderMax()
+        private async Task<bool> AddConnectionIfUnderMax(TimeSpan timeout)
         {
             while (true)
             {
@@ -342,22 +360,44 @@ namespace Gremlin.Net.Driver
                 }
             }
 
-            try
+            // Aggressively try to connect.
+            long start = Stopwatch.GetTimestamp();
+            TimeSpan remaining = timeout;
+
+            do
             {
-                var connection = await CreateNewConnectionAsync();
-                lock (_connections)
+                Connection connection = null;
+
+                try
                 {
-                    _connections.Add(connection);
+                    connection = await CreateNewConnectionAsync();
+                    if (connection.IsOpen)
+                    {
+                        lock (_connections)
+                        {
+                            _connections.Add(connection);
+                            _availableConnection.Notify();
+                        }
+
+                        return true;
+                    }
+                    else
+                    {
+                        connection.Dispose();
+                    }
+                }
+                catch
+                {
+                    // An exception should only happen if the connection failed to open,
+                    // but dispose it if it just in case.
+                    connection?.Dispose();
                 }
 
-                _availableConnection.Notify();
-                return true;
+                remaining = timeout - new TimeSpan(Stopwatch.GetTimestamp() - start);
             }
-            catch
-            {
-                Interlocked.Decrement(ref _opened);
-            }
+            while (remaining > TimeSpan.Zero);
 
+            Interlocked.Decrement(ref _opened);
             return false;
         }
 
