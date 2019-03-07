@@ -24,6 +24,8 @@
 using System;
 using System.Net.WebSockets;
 using Gremlin.Net.Structure.IO.GraphSON;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gremlin.Net.Driver
 {
@@ -32,12 +34,14 @@ namespace Gremlin.Net.Driver
         private readonly GraphSONReader _graphSONReader;
         private readonly GraphSONWriter _graphSONWriter;
         private readonly Action<ClientWebSocketOptions> _webSocketConfiguration;
+        private readonly ILogger _logger;
         private readonly GremlinServer _gremlinServer;
         private readonly string _mimeType;
 
         public ConnectionFactory(GremlinServer gremlinServer, GraphSONReader graphSONReader,
-            GraphSONWriter graphSONWriter, string mimeType, Action<ClientWebSocketOptions> webSocketConfiguration)
+            GraphSONWriter graphSONWriter, string mimeType, Action<ClientWebSocketOptions> webSocketConfiguration, ILogger logger = null)
         {
+            _logger = logger ?? NullLogger.Instance;
             _gremlinServer = gremlinServer;
             _mimeType = mimeType;
             _graphSONReader = graphSONReader ?? throw new ArgumentNullException(nameof(graphSONReader));
@@ -48,7 +52,7 @@ namespace Gremlin.Net.Driver
         public Connection CreateConnection()
         {
             return new Connection(_gremlinServer.Uri, _gremlinServer.Username, _gremlinServer.Password, _graphSONReader,
-                                 _graphSONWriter, _mimeType, _webSocketConfiguration);
+                                 _graphSONWriter, _mimeType, _webSocketConfiguration, _logger);
         }
     }
 }

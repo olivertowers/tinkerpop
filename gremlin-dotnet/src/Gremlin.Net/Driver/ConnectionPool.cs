@@ -31,6 +31,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Gremlin.Net.Driver.Exceptions;
 using Gremlin.Net.Process;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gremlin.Net.Driver
 {
@@ -38,133 +40,53 @@ namespace Gremlin.Net.Driver
     {
         private readonly ConnectionFactory _connectionFactory;
         private readonly HashSet<Connection> _connections = new HashSet<Connection>(ReferenceEqualityComparer.Default);
+
+        private readonly ConcurrentDictionary<Guid, Connection> _bin = new ConcurrentDictionary<Guid, Connection>();
+
         private readonly int _poolSize;
         private readonly int _maxInProcessPerConnection;
-        private readonly EventAsync _availableConnection;
-        private int _opened;
+        private readonly int _maxSimultaneousUsagePerConnection;
+        private readonly TimeSpan _reconnectInterval;
+        private readonly TimeSpan _maxWaitForConnectionTimeout;
+        private readonly ILogger _logger;
+        private int _nrConnectionsOpened;
         private int _nrWaitingOnConnection;
-        private int scheduledConnection;
-    
-        private TimeSpan waitForConnectionTimeout = TimeSpan.FromMinutes(1);
+        private int _scheduledNewConnections;
+        private bool _isClosed;
+        private SemaphoreSlim _maxConcurrent;
 
-        // private const int PoolEmpty = 0;
-        // private const int PoolPopulationInProgress = -1;
-
-        // private SemaphoreSlim _populatePool;
-
-        public ConnectionPool(ConnectionFactory connectionFactory, ConnectionPoolSettings settings)
+        public ConnectionPool(ConnectionFactory connectionFactory, ConnectionPoolSettings settings, ILogger logger = null)
         {
             _connectionFactory = connectionFactory;
             _poolSize = settings.PoolSize;
             _maxInProcessPerConnection = settings.MaxInProcessPerConnection;
-            _availableConnection = new EventAsync();
-            //_populatePool = new SemaphoreSlim(1, 1);
-            SchedulePopulatePool2(_poolSize);
+            _maxSimultaneousUsagePerConnection = settings.MaxSimultaneousUsagePerConnection;
+            _maxWaitForConnectionTimeout = settings.MaxWaitForConnection;
+            _reconnectInterval = settings.ReconnectInterval;
+            _maxConcurrent = new SemaphoreSlim(_maxSimultaneousUsagePerConnection * _poolSize);
+            _logger = logger ?? NullLogger.Instance;
+            SchedulePopulatePool(_poolSize);
         }
         
         public int NrConnections
         {
             get
             {
-                return _opened < 0 ? 0 : _opened;
+                return _nrConnectionsOpened < 0 ? 0 : _nrConnectionsOpened;
             }
         }
         
         public async Task<IConnection> GetAvailableConnectionAsync()
         {
-            // await EnsurePoolIsPopulatedAsync().ConfigureAwait(false);
-            //return ProxiedConnection(await GetConnectionFromPool());
-
             return ProxiedConnection(await BorrowConnection());
         }
 
-        // private async Task EnsurePoolIsPopulatedAsync()
-        // {
-        //     Stopwatch watch = Stopwatch.StartNew();
-        //     // The pool could have been empty because of connection problems. So, we need to populate it again.
-        //     //  while (true)
-        //     //  {
-        //         // nrOpened = 1
-        //         // var nrOpened = Interlocked.CompareExchange(ref _nrConnections, PoolEmpty, PoolEmpty);
-        //         if (_nrConnections >= _poolSize) return;
-        //         int deficit = _poolSize - _nrConnections;
-
-        //         //ar curState = Interlocked.CompareExchange(ref _poolState, PoolInDeficit, PoolComplete);
-        //         //if (curState != PoolPopulationInProgress)
-        //         //{
-        //             await PopulatePoolAsync().ConfigureAwait(false);
-        //         //}
-        //     // }
-        //     Console.WriteLine($"repopulated pool with deficit: {deficit}, duration: {watch.Elapsed.TotalMilliseconds}");
-        // }
-
-        // private async Task PopulatePoolAsync()
-        // {
-        //     // var curState = Interlocked.CompareExchange(ref _poolState, PoolPopulationInProgress, PoolInDeficit);
-        //     // if (curState == PoolPopulationInProgress || _nrConnections >= _poolSize) return;
-        //     try
-        //     {
-        //         await _populatePool.WaitAsync().ConfigureAwait(false);
-        //         var _nrOpened = _nrConnections;
-        //         if (_nrOpened >= _poolSize) return;
-
-        //         var poolDeficit = _poolSize - _nrOpened;
-        //         var connectionCreationTasks = new List<Task<Connection>>(poolDeficit);
-        //         for (var i = 0; i < poolDeficit; i++)
-        //         {
-        //             connectionCreationTasks.Add(CreateNewConnectionAsync());
-        //         }
-
-        //         var createdConnections = await Task.WhenAll(connectionCreationTasks).ConfigureAwait(false);
-        //         foreach (var c in createdConnections)
-        //         {
-        //             _connections.Enqueue(c);
-        //         }
-        //     }
-        //     finally
-        //     {
-        //         // We need to remove the PoolPopulationInProgress flag again even if an exception occurred, so we don't block the pool population for ever
-        //         Console.WriteLine($"pool repopulated: {_connections.Count}");
-        //         Interlocked.Exchange(ref _nrConnections, _connections.Count);
-        //         _populatePool.Release();
-        //     }
-        // }
-        
         private async Task<Connection> CreateNewConnectionAsync()
         {
             var newConnection = _connectionFactory.CreateConnection();
             await newConnection.ConnectAsync().ConfigureAwait(false);
             return newConnection;
         }
-
-        // private async Task<Connection> GetConnectionFromPool()
-        // {
-        //     Stopwatch watch = Stopwatch.StartNew();
-        //     while (true)
-        //     {
-        //         Stopwatch usedConnWatch = Stopwatch.StartNew();
-        //         var connection = await SelectLeastUsedConnection();
-        //         Console.WriteLine($"Selected coonncetion duration: {usedConnWatch.Elapsed.TotalMilliseconds}");
-        //         if (connection == null && _nrConnections > 0)
-        //         {
-        //             Console.WriteLine($"connections unavailable, retrying selction.");
-        //             continue;
-        //         }
-
-        //         if (connection == null)
-        //             throw new ServerUnavailableException();
-        //         if (connection.NrRequestsInFlight >= _maxInProcessPerConnection)
-        //             throw new ConnectionPoolBusyException(_poolSize, _maxInProcessPerConnection);
-        //         if (connection.IsOpen) {
-        //             _connections.Enqueue(connection);
-        //             Console.WriteLine($"Retrieved connection from pool. Duration: {watch.Elapsed.TotalMilliseconds}.");
-        //             return connection;
-        //         }
-
-        //         Console.WriteLine($"Bad connection.");
-        //         DefinitelyDestroyConnection(connection);
-        //     }
-        // }
 
         public int CurrentSize()
         {
@@ -176,95 +98,117 @@ namespace Gremlin.Net.Driver
 
         private async Task<Connection> BorrowConnection()
         {
-            Stopwatch watch = Stopwatch.StartNew();
+            if (_isClosed)
+            {
+                throw new ServerUnavailableException();
+            }
 
+            Stopwatch borrowConnectionWatch = Stopwatch.StartNew();
+            Connection leastUsedConn = null;
             try
             {
                 Interlocked.Increment(ref _nrWaitingOnConnection);
-                var deadConnections = new List<Connection>();
-                Connection leastUsedConn = SelectLeastUsedConnection2(deadConnections);
 
-                if (CurrentSize() == 0)
+                // Select the least used connection. This will temporarily borrow the connection 
+                // so that a space its taken up for the pending request. If the candidate connection is
+                // found to be invalid, then the borrow count on the connection is decremented.
+                leastUsedConn = SelectLeastUsedConnection();
+                int currentPoolSize = CurrentSize();
+
+                // No connection found and pool is empty. Full re-population required.
+                if (leastUsedConn == null && currentPoolSize == 0)
                 {
-                    // full re-population required.
-                    SchedulePopulatePool2(_poolSize);
-                    return await WaitForConnectionAsync(waitForConnectionTimeout);
+                    _logger.LogDebug($"Empty pool found. Pool size: {currentPoolSize}, Bin size: {_bin.Count}.");
+                    SchedulePopulatePool(_poolSize);
+                    return await WaitForConnectionAsync(borrowConnectionWatch);
                 }
 
+                // We missed getting a connection after it was populated. This could be due to a pool full of dead connections
+                // so try to remove them and schedule creation of a new connection.
                 if (leastUsedConn == null)
                 {
-                    // We missed getting a connection after it was populated so wait for the next available.
-                    // What if the pool is populated since? This won't get notified until a deficit is detected.
-                    if (deadConnections.Count > 0)
+                    _logger.LogDebug($"No connection selected. Pool size: {currentPoolSize}, Bin size: {_bin.Count}.");
+                    if (_bin.Count > 0)
                     {
-                        foreach (var deadConn in deadConnections)
+                        _logger.LogDebug($"Attempting to remove all dead connections: Size: {_bin.Count}.");
+                        foreach (var deadConn in _bin.Values)
                         {
                             RemoveDeadConnection(deadConn);
                         }
-
-                        Console.WriteLine($"Removed {deadConnections.Count} connections.");
                     }
 
                     ConsiderNewConnection();
-                    return await WaitForConnectionAsync(waitForConnectionTimeout);
+                    return await WaitForConnectionAsync(borrowConnectionWatch);
                 }
 
-                int currentPoolSize = CurrentSize();
-                if (leastUsedConn.NrBorrowed >= _maxInProcessPerConnection && (currentPoolSize - deadConnections.Count) < _poolSize)
+                if (leastUsedConn.NrBorrowed >= _maxSimultaneousUsagePerConnection && (currentPoolSize - _bin.Count) < _poolSize)
                 {
-                    // remove a dead connection to make room for a new connnection.
-                    if (currentPoolSize >= _poolSize)
-                    {
-                        foreach (var deadConnection in deadConnections)
-                        {
-                            if (RemoveDeadConnection(deadConnection))
-                            {
-                                break;
-                            }
-                        }
-                    }
-
-                    // least used connection is too busy and the pool is not at capacity, try to schedule
-                    // a connection.
-                    ConsiderNewConnection();
+                    _logger.LogDebug($"Least used connection is too busy, borrowed {leastUsedConn.NrBorrowed} >= max {_maxSimultaneousUsagePerConnection}. Pool has capacity: Pool size: {currentPoolSize}, Bin size: {_bin.Count}.");
+                    GrowPoolIfCapacityAvailable();
                 }
 
-                // borrow the connection.
+                // finalize borrowing the select connection.
                 while (true)
                 {
                     int borrowed = leastUsedConn.NrBorrowed;
-                    if (borrowed >= _maxInProcessPerConnection && leastUsedConn.NrRequestsInFlight >= _maxInProcessPerConnection)
+                    int nrInFlight = leastUsedConn.NrRequestsInFlight;
+                    if (borrowed >= _maxSimultaneousUsagePerConnection && nrInFlight >= _maxInProcessPerConnection)
                     {
-                        return await WaitForConnectionAsync(waitForConnectionTimeout);
+                        _logger.LogDebug($"Least used connection {leastUsedConn.Id} has borrowed {borrowed} >= max usage {_maxSimultaneousUsagePerConnection} and in-flight {nrInFlight} >= max inflight {_maxInProcessPerConnection}.");
+                        leastUsedConn.DecrementBorrowed();
+                        return await WaitForConnectionAsync(borrowConnectionWatch);
                     }
 
                     if (!leastUsedConn.IsOpen)
                     {
+                        leastUsedConn.DecrementBorrowed();
+                        _logger.LogDebug($"Least used connection no longer open. Id: {leastUsedConn.Id}, Pool size: {currentPoolSize}.");
                         ReplaceDeadConnection(leastUsedConn);
-                        return await WaitForConnectionAsync(waitForConnectionTimeout);
+                        return await WaitForConnectionAsync(borrowConnectionWatch);
                     }
 
-                    if (leastUsedConn.TryCompareSetBorrow(borrowed, borrowed + 1))
-                    {
-                        Interlocked.Decrement(ref _nrWaitingOnConnection);
-                        return leastUsedConn;
-                    }
+                    _logger.LogInformation($"Borrowed connection: {leastUsedConn.Id}. Duration: {borrowConnectionWatch.Elapsed.TotalMilliseconds}ms.");
+                    Interlocked.Decrement(ref _nrWaitingOnConnection);
+                    return leastUsedConn;
                 }
             }
-            finally
+            catch (Exception e)
             {
-                Console.WriteLine($"Finished borrow connection. Duration: {watch.Elapsed.TotalMilliseconds}.");
+                _logger.LogDebug($"Borrow connection threw exception after {borrowConnectionWatch.Elapsed.TotalMilliseconds}ms. Exception: {e}.");
+                leastUsedConn?.DecrementBorrowed();
+                Interlocked.Decrement(ref _nrWaitingOnConnection);
+                throw;
             }
         }
 
-        private void SchedulePopulatePool2(int populateSize)
+        private void GrowPoolIfCapacityAvailable()
+        {
+            // Remove a dead connection if we need to make room for a new connnection.
+            int currentSize = CurrentSize();
+            if (currentSize >= _poolSize && currentSize - _bin.Count < _poolSize)
+            {
+                foreach (var deadConnection in _bin.Values)
+                {
+                    if (RemoveDeadConnection(deadConnection))
+                    {
+                        break;
+                    }
+                }
+            }
+
+            // least used connection is too busy and the pool is not at capacity, try to schedule a connection.
+            ConsiderNewConnection();
+        }
+
+        private void SchedulePopulatePool(int populateSize)
         {
             populateSize = Math.Min(populateSize, _poolSize);
+            _logger.LogDebug($"Re-populate pool by size: {populateSize}.");
             for (int i = 0; i < populateSize; ++i)
             {
-                if (scheduledConnection < populateSize)
+                if (_scheduledNewConnections < populateSize)
                 {
-                    Interlocked.Increment(ref scheduledConnection);
+                    Interlocked.Increment(ref _scheduledNewConnections);
                     ScheduleNewConnection();
                 }
             }
@@ -274,15 +218,17 @@ namespace Gremlin.Net.Driver
         {
             while (true)
             {
-                int inCreation = scheduledConnection;
+                int inCreation = _scheduledNewConnections;
 
                 if (inCreation * _maxInProcessPerConnection >=  (1 + _nrWaitingOnConnection))
                 {
+                    _logger.LogDebug($"Skip scheduling new connection. Sufficient tasks are pending. Scheduled connection tasks: {inCreation + 1}. Waiting requests: {_nrWaitingOnConnection}.");
                     return;
                 }
 
-                if (Interlocked.CompareExchange(ref scheduledConnection, inCreation + 1, inCreation) == inCreation)
+                if (Interlocked.CompareExchange(ref _scheduledNewConnections, inCreation + 1, inCreation) == inCreation)
                 {
+                    _logger.LogDebug($"Schedule new connection: Scheduled connection tasks: {inCreation + 1}. Waiting request: {_nrWaitingOnConnection}");
                     break;
                 }
             }
@@ -293,26 +239,26 @@ namespace Gremlin.Net.Driver
         private void ScheduleNewConnection()
         {
             Task.Run(async () => {
-                await AddConnectionIfUnderMax(waitForConnectionTimeout);
-                Interlocked.Decrement(ref scheduledConnection);
+                await AddConnectionIfUnderMax();
+                Interlocked.Decrement(ref _scheduledNewConnections);
             }).Forget();
         }
 
-        private async Task<Connection> WaitForConnectionAsync(TimeSpan timeout)
+        private async Task<Connection> WaitForConnectionAsync(Stopwatch borrowConnectionWatch)
         {
             long start = Stopwatch.GetTimestamp();
-            TimeSpan remaining = timeout;
+
+            TimeSpan timeout = _maxWaitForConnectionTimeout;
+            TimeSpan remaining = _maxWaitForConnectionTimeout;
 
             do
             {
-                Task timeoutTask = Task.Delay(timeout);
-                Task waitAvailableTask = _availableConnection.WaitAsync();
-                if ((await Task.WhenAny(waitAvailableTask, timeoutTask)) != waitAvailableTask)
+                if (!(await _maxConcurrent.WaitAsync(remaining)))
                 {
                     break;
                 }
 
-                Connection leastUsedConn = SelectLeastUsedConnection2();
+                Connection leastUsedConn = SelectLeastUsedConnection();
                 if (leastUsedConn != null) 
                 {
                     while (true)
@@ -320,14 +266,15 @@ namespace Gremlin.Net.Driver
                         int borrowed = leastUsedConn.NrBorrowed;
                         if (borrowed >= _maxInProcessPerConnection)
                         {
+                            GrowPoolIfCapacityAvailable();
+                            leastUsedConn.DecrementBorrowed();
+                            _logger.LogDebug($"Wait on connection returned busy connection {leastUsedConn.Id}. Continue wait.");
                             break;
                         }
 
-                        if (leastUsedConn.TryCompareSetBorrow(borrowed, borrowed + 1))
-                        {
-                            Interlocked.Decrement(ref _nrWaitingOnConnection);
-                            return leastUsedConn;
-                        }
+                        _logger.LogInformation($"Borrowed connection: {leastUsedConn.Id}. Duration: {borrowConnectionWatch.Elapsed.TotalMilliseconds}ms.");
+                        Interlocked.Decrement(ref _nrWaitingOnConnection);
+                        return leastUsedConn;
                     }
                 }
 
@@ -335,36 +282,46 @@ namespace Gremlin.Net.Driver
             }
             while (remaining > TimeSpan.Zero);
 
+            _logger.LogDebug($"Timed out waiting for connection: Timeout: {timeout}. Number requests waiting: {_nrWaitingOnConnection}.");
             Interlocked.Decrement(ref _nrWaitingOnConnection);
-            ConsiderUnavailable();
-            throw new TimeoutException($"Timed out waiting for connection after {timeout}");
+            throw new ConnectionPoolBusyException(_poolSize, _maxInProcessPerConnection, $"Timed out waiting for connection after {timeout}.");
         }
 
-        private Connection SelectLeastUsedConnection2(List<Connection> deadConnections = null)
+        private Connection SelectLeastUsedConnection()
         {
-            var nrMinInFlightConnections = int.MaxValue;
-            var maxLastUsedTime = long.MinValue;
+            int nrMinInFlightConnections = int.MaxValue;
+            long currentTime = Stopwatch.GetTimestamp();
+            long maxLastUsedDelta = 0;
             Connection leastBusy = null;
 
             lock (_connections)
             {
                 foreach (Connection connection in _connections)
                 {
-                    int nrInFlight = connection.NrRequestsInFlight;
+                    int nrInFlight = connection.NrBorrowed;
                     long lastUsed = connection.LastUsedTimeTicks;
                     if (connection.IsOpen &&
-                        nrInFlight < nrMinInFlightConnections ||
+                        (nrInFlight < nrMinInFlightConnections ||
                         (nrInFlight == nrMinInFlightConnections &&
-                        maxLastUsedTime < lastUsed))
+                        currentTime - lastUsed > maxLastUsedDelta)))
                     {
                         nrMinInFlightConnections = nrInFlight;
-                        maxLastUsedTime = lastUsed;
+                        maxLastUsedDelta = currentTime - lastUsed;
                         leastBusy = connection;
                     }
 
-                    if (!connection.IsOpen && deadConnections != null)
+                    if (!connection.IsOpen)
                     {
-                        deadConnections.Add(connection);
+                        _bin.TryAdd(connection.Id, connection);
+                    }
+                }
+
+                if (leastBusy != null)
+                {
+                    int borrowed = leastBusy.NrBorrowed;
+                    while (!leastBusy.TryCompareSetBorrow(borrowed, borrowed + 1))
+                    {
+                        borrowed = leastBusy.NrBorrowed;
                     }
                 }
             }
@@ -372,26 +329,28 @@ namespace Gremlin.Net.Driver
             return leastBusy;
         }
 
-        private async Task<bool> AddConnectionIfUnderMax(TimeSpan timeout)
+        private async Task<bool> AddConnectionIfUnderMax()
         {
             while (true)
             {
-                int nrOpened = _opened;
+                int currentSize = CurrentSize();
+                int nrOpened = _nrConnectionsOpened;
                 if (nrOpened >= _poolSize)
                 {
-                    Console.WriteLine($"Skip new connection. Pool at capacity. Opened size: {_opened}. Actual: {CurrentSize()} ");
+                    _logger.LogDebug($"Skip new connection. Pool at capacity. Opened size: {nrOpened}. Actual: {currentSize}.");
                     return false;
                 }
 
-                if (Interlocked.CompareExchange(ref _opened, nrOpened + 1, nrOpened) == nrOpened)
+                if (Interlocked.CompareExchange(ref _nrConnectionsOpened, nrOpened + 1, nrOpened) == nrOpened)
                 {
-                    Console.WriteLine($"Adding new connection. Opened: size {_opened}. Actual: {CurrentSize()}");
+                    _logger.LogDebug($"Adding new connection. Opened: size {_nrConnectionsOpened}. Actual: {currentSize}.");
                     break;
                 }
             }
 
-            // Aggressively try to connect.
+            // Keep trying to reconnect until the timeout is hit.
             long start = Stopwatch.GetTimestamp();
+            TimeSpan timeout = _maxWaitForConnectionTimeout;
             TimeSpan remaining = timeout;
 
             do
@@ -403,138 +362,38 @@ namespace Gremlin.Net.Driver
                     connection = await CreateNewConnectionAsync();
                     if (connection.IsOpen)
                     {
+                        _logger.LogDebug($"Created connection {connection.Id}.");
                         lock (_connections)
                         {
                             _connections.Add(connection);
-                            _availableConnection.Notify();
                         }
 
+                        _maxConcurrent.Release(_maxSimultaneousUsagePerConnection);
                         return true;
                     }
                     else
                     {
+                        _logger.LogDebug($"Connection created in bad state. Id: {connection.Id}.");
                         connection.Dispose();
                     }
                 }
-                catch
+                catch (Exception e)
                 {
-                    try
-                    {
-                        // An exception should only happen if the connection failed to open,
-                        // but dispose it if it just in case.
-                        connection?.Dispose();
-                    }
-                    catch
-                    {
-                    }
+                    _logger.LogDebug($"Exception on create connection: Exception: {e}.");
+                    connection?.Dispose();
                 }
 
+                await Task.Delay(_reconnectInterval);
                 remaining = timeout - new TimeSpan(Stopwatch.GetTimestamp() - start);
             }
             while (remaining > TimeSpan.Zero);
 
-            Console.WriteLine($"Timed out creating connection. Pool size {_opened}.");
-            Interlocked.Decrement(ref _opened);
+            Interlocked.Decrement(ref _nrConnectionsOpened);
+            _logger.LogDebug($"Timed out creating connection after {timeout.TotalMilliseconds}ms. Pool size {_nrConnectionsOpened}.");
+            ConsiderUnavailable();
             return false;
         }
 
-        private sealed class EventAsync
-        {
-            /// <summary>Task tracking pending waiters. Each pending waiter is waiting on this task.</summary>
-            /// <remarks>If null then there are no pending waiters.</remarks>
-            private TaskCompletionSource<object> task;
-
-            /// <summary>Waits for the event to be signaled.</summary>
-            /// <returns>Returns a task that completes when the event has been signaled.</returns>
-            public Task WaitAsync()
-            {
-                // If there are already pending waiters then just add to the list, otherwise create a new task.
-                TaskCompletionSource<object> newTaskCompletionSource = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-                newTaskCompletionSource = Interlocked.CompareExchange(ref this.task, newTaskCompletionSource, null) ?? newTaskCompletionSource;
-                return newTaskCompletionSource.Task;
-            }
-
-            /// <summary>Pulses the event.</summary>
-            /// <remarks>All pending waiters are enabled, but subsequent waiters will block until the next signal.</remarks>
-            public void Notify()
-            {
-                // If there are no pending waiters then there is nothing to do.
-                TaskCompletionSource<object> oldTaskCompletionSource = Interlocked.Exchange(ref this.task, null);
-                oldTaskCompletionSource?.SetResult(null);
-            }
-        }
-
-        // private async Task<Connection> SelectLeastUsedConnection()
-        // {
-        //     if (_connections.IsEmpty) return null;
-        //     var nrMinInFlightConnections = int.MaxValue;
-        //     Connection leastBusy = null;
-        //     Stopwatch watch = Stopwatch.StartNew();
-        //     int repopulation = 0;
-        //     int poolContention = 0;
-        //     while (leastBusy == null)
-        //     {
-        //         int index = 0;
-        //         int nrAvaialable = _connections.Count;
-        //         while (index < nrAvaialable)
-        //         {
-        //             if (!_connections.TryDequeue(out Connection connection))
-        //             {
-        //                 break;
-        //             }
-
-        //             if (connection.IsOpen)
-        //             {
-        //                 var nrInFlight = connection.NrRequestsInFlight;
-        //                 if (nrInFlight >= nrMinInFlightConnections)
-        //                 {
-        //                     // found least used connection. Return last dequeued
-        //                     // conncection break-out.
-        //                     _connections.Enqueue(connection);
-        //                     break;
-        //                 }
-
-        //                 if (leastBusy != null)
-        //                 {
-        //                     // a less used connection was found. Return
-        //                     // previous candidate.
-        //                     _connections.Enqueue(leastBusy);
-        //                     leastBusy = null;
-        //                 }
-
-        //                 nrMinInFlightConnections = nrInFlight;
-        //                 leastBusy = connection;
-        //             }
-
-        //             index++;
-        //         }
-
-        //         if (leastBusy == null)
-        //         {
-        //             // If we didn't find a connection, the pool is either
-        //             // seeing high contention (multiple threads trying to borrow a connection)
-        //             // OR, the pool has reduced due to closed connections.
-        //             if (NrConnections > 0)
-        //             {
-        //                 poolContention++;
-        //             }
-        //             else
-        //             {
-        //                 repopulation++;
-        //                 await EnsurePoolIsPopulatedAsync();
-        //                 nrAvaialable = _connections.Count;
-        //             }
-        //         }
-        //         else
-        //         {
-        //             _connections.Enqueue(leastBusy);
-        //             Console.WriteLine($"Selected connection {index}. Repop: {repopulation}, Contention: {poolContention}, Duration; {watch.Elapsed.TotalMilliseconds}");
-        //         }
-        //     }
-
-        //     return leastBusy;
-        // }
-        
         private IConnection ProxiedConnection(Connection connection)
         {
             return new ProxyConnection(connection, ReturnConnectionIfOpen);
@@ -543,9 +402,11 @@ namespace Gremlin.Net.Driver
         private void ReturnConnectionIfOpen(Connection connection)
         {
             int borrrowed = connection.DecrementBorrowed();
-            if (connection.IsOpen)
+            if (!_isClosed && connection.IsOpen)
             {
-                _availableConnection.Notify();
+                _logger.LogDebug($"Returning connection {connection.Id} to pool. Current borrowed: {borrrowed}.");
+                //_availableConnection.Notify();
+                _maxConcurrent.Release(1);
                 return;
             }
 
@@ -554,6 +415,7 @@ namespace Gremlin.Net.Driver
 
         private void ConsiderUnavailable()
         {
+            _isClosed = true;
             CloseAndRemoveAllConnectionsAsync().WaitUnwrap();
         }
 
@@ -565,27 +427,6 @@ namespace Gremlin.Net.Driver
             }
         }
 
-        // private async Task RemoveConnection(Connection connection)
-        // {
-        //     try
-        //     {
-        //         if (connection.IsOpen)
-        //         {
-        //             await connection.CloseAsync().ConfigureAwait(false);
-        //         }
-
-        //         DefinitelyDestroyConnection(connection);
-        //     }
-        //     finally
-        //     { 
-        //         lock (_connections)
-        //         {
-        //             _connections.Remove(connection);
-        //         }
-        //     }
-
-        // }
-
         private bool RemoveDeadConnection(Connection connection)
         {
             if (connection.IsOpen)
@@ -595,9 +436,8 @@ namespace Gremlin.Net.Driver
 
             if (connection.NrBorrowed > 0)
             {
-                // avoid prematurely destroying a connection if
-                // it is in-use.
-                Console.WriteLine($"Dead Connection with requests in flight {connection.NrRequestsInFlight}.");
+                // avoid prematurely destroying a connection if it is in-use.
+                _logger.LogDebug($"Skip remove of  dead connection {connection.Id}. Current borrowed: {connection.NrBorrowed}.");
                 return false;
             }
 
@@ -611,9 +451,10 @@ namespace Gremlin.Net.Driver
                 {
                     if (_connections.Contains(connection))
                     {
+                        _bin.TryRemove(connection.Id, out Connection _);
                         _connections.Remove(connection);
-                        Interlocked.Decrement(ref _opened);
-                        Console.WriteLine($"Removed dead connection: Opened: {_opened}. Actual: {_connections.Count}.");
+                        Interlocked.Decrement(ref _nrConnectionsOpened);
+                        _logger.LogDebug($"Removed dead connection {connection.Id} from pool: Opened: {_nrConnectionsOpened}. Actual: {_connections.Count}.");
                     }
                 }
             }
@@ -623,15 +464,29 @@ namespace Gremlin.Net.Driver
 
         private async Task CloseAndRemoveAllConnectionsAsync()
         {
-            List<Connection> connectionsToDestroy = new List<Connection>();
+            _logger.LogDebug($"Removing all connections.");
+            HashSet<Connection> connectionsToDestroy = new HashSet<Connection>(ReferenceEqualityComparer.Default);
             lock (_connections)
             {
+                // Clear all connections in the pool.
                 foreach (var connection in  _connections)
                 {
-                    connectionsToDestroy.Add(connection);
-                    _connections.Remove(connection);
-                    Interlocked.Decrement(ref _opened);
-                    Console.WriteLine($"Removed connection: Opened: {_opened}. Actual: {_connections.Count}.");
+                    if (connection.NrBorrowed == 0)
+                    {
+                        connectionsToDestroy.Add(connection);
+                        _connections.Remove(connection);
+                        Interlocked.Decrement(ref _nrConnectionsOpened);
+                    }
+                }
+
+                // Remove all dead connections in the bin.
+                foreach (var connection in _bin.Values)
+                {
+                    if (connection.NrBorrowed == 0)
+                    {
+                        connectionsToDestroy.Add(connection);
+                        _bin.TryRemove(connection.Id, out Connection _);
+                    }
                 }
             }
 
@@ -682,5 +537,31 @@ namespace Gremlin.Net.Driver
             public new bool Equals(object x, object y) => ReferenceEquals(x, y);
             public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
         }
+
+        // private sealed class EventAsync
+        // {
+        //     /// <summary>Task tracking pending waiters. Each pending waiter is waiting on this task.</summary>
+        //     /// <remarks>If null then there are no pending waiters.</remarks>
+        //     private TaskCompletionSource<object> task;
+
+        //     /// <summary>Waits for the event to be signaled.</summary>
+        //     /// <returns>Returns a task that completes when the event has been signaled.</returns>
+        //     public Task WaitAsync()
+        //     {
+        //         // If there are already pending waiters then just add to the list, otherwise create a new task.
+        //         TaskCompletionSource<object> newTaskCompletionSource = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+        //         newTaskCompletionSource = Interlocked.CompareExchange(ref this.task, newTaskCompletionSource, null) ?? newTaskCompletionSource;
+        //         return newTaskCompletionSource.Task;
+        //     }
+
+        //     /// <summary>Pulses the event.</summary>
+        //     /// <remarks>All pending waiters are enabled, but subsequent waiters will block until the next signal.</remarks>
+        //     public void Notify()
+        //     {
+        //         // If there are no pending waiters then there is nothing to do.
+        //         TaskCompletionSource<object> oldTaskCompletionSource = Interlocked.Exchange(ref this.task, null);
+        //         oldTaskCompletionSource?.SetResult(null);
+        //     }
+        // }
     }
 }

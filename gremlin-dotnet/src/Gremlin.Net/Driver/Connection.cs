@@ -32,6 +32,9 @@ using System.Threading.Tasks;
 using Gremlin.Net.Driver.Messages;
 using Gremlin.Net.Process;
 using Gremlin.Net.Structure.IO.GraphSON;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
 namespace Gremlin.Net.Driver
@@ -50,6 +53,7 @@ namespace Gremlin.Net.Driver
         private readonly JsonMessageSerializer _messageSerializer;
         private readonly Uri _uri;
         private readonly WebSocketConnection _webSocketConnection;
+        private readonly ILogger _logger;
         private readonly string _username;
         private readonly string _password;
         private readonly ConcurrentQueue<RequestMessage> _writeQueue = new ConcurrentQueue<RequestMessage>();
@@ -64,21 +68,27 @@ namespace Gremlin.Net.Driver
         private long _lastUsedTimeTicks;
 
         public Connection(Uri uri, string username, string password, GraphSONReader graphSONReader,
-            GraphSONWriter graphSONWriter, string mimeType, Action<ClientWebSocketOptions> webSocketConfiguration)
+            GraphSONWriter graphSONWriter, string mimeType, Action<ClientWebSocketOptions> webSocketConfiguration,
+            ILogger logger = null)
         {
             _uri = uri;
             _username = username;
             _password = password;
             _graphSONReader = graphSONReader;
             _graphSONWriter = graphSONWriter;
+            _logger = logger ?? NullLogger.Instance;
             _messageSerializer = new JsonMessageSerializer(mimeType);
-            _webSocketConnection = new WebSocketConnection(webSocketConfiguration);
+            _webSocketConnection = new WebSocketConnection(webSocketConfiguration, _logger);
         }
+
+        public Guid Id => _webSocketConnection.Id;
 
         public async Task ConnectAsync()
         {
+            _logger.LogDebug($"Connection {Id}: Connecting to server: {_uri}");
             await _webSocketConnection.ConnectAsync(_uri).ConfigureAwait(false);
             Interlocked.Exchange(ref _lastUsedTimeTicks, Stopwatch.GetTimestamp());
+            _logger.LogDebug($"Connection {Id}: Connected.");
             BeginReceiving();
         }
 
@@ -107,6 +117,7 @@ namespace Gremlin.Net.Driver
 
         public Task<ResultSet<T>> SubmitAsync<T>(RequestMessage requestMessage)
         {
+            _logger.LogDebug($"Connection {Id}: Enqueue request. Request: {requestMessage.RequestId}.");
             var receiver = new ResponseHandlerForSingleRequestMessage<T>(_graphSONReader);
             _callbackByRequestId.GetOrAdd(requestMessage.RequestId, receiver);
             _writeQueue.Enqueue(requestMessage);
@@ -116,6 +127,7 @@ namespace Gremlin.Net.Driver
 
         private void BeginReceiving()
         {
+            _logger.LogDebug($"Connection {Id}: Begin receiving.");
             var state = Volatile.Read(ref _connectionState);
             if (state == Closed) return;
             ReceiveMessagesAsync().Forget();
@@ -129,10 +141,12 @@ namespace Gremlin.Net.Driver
                 {
                     var received = await _webSocketConnection.ReceiveMessageAsync().ConfigureAwait(false);
                     Interlocked.Exchange(ref _lastUsedTimeTicks, Stopwatch.GetTimestamp());
+
                     Parse(received);
                 }
                 catch (Exception e)
                 {
+                    _logger.LogDebug($"Connection: {Id} : Received connection error : Last Used: {TimeSpan.FromTicks(LastUsedTimeTicks)} : Current: {TimeSpan.FromTicks(Stopwatch.GetTimestamp())} : Borrowed: {NrBorrowed} : InFlight: {NrRequestsInFlight} : Type: {e.GetType()} : Exception: {e}.");
                     await CloseConnectionBecauseOfFailureAsync(e).ConfigureAwait(false);
                     break;
                 }
@@ -149,6 +163,7 @@ namespace Gremlin.Net.Driver
             }
             catch (Exception e)
             {
+                _logger.LogDebug($"Connection: {Id} : Invalid response : Exception: {e}");
                 if (_callbackByRequestId.TryRemove(receivedMsg.RequestId, out var responseHandler))
                 {
                     responseHandler.HandleFailure(e);
@@ -159,6 +174,8 @@ namespace Gremlin.Net.Driver
         private void TryParseResponseMessage(ResponseMessage<JToken> receivedMsg)
         {
             var status = receivedMsg.Status;
+
+            _logger.LogDebug($"Connection: {Id} : Request Id: {receivedMsg.RequestId} : Received response : Status code: {status.Code}");
             status.ThrowIfStatusIndicatesError();
 
             if (status.Code == ResponseStatusCode.Authenticate)
@@ -210,11 +227,13 @@ namespace Gremlin.Net.Driver
             {
                 try
                 {
+                    _logger.LogDebug($"Connection: {Id} : Request: {msg.RequestId} : Sending request: {JsonConvert.SerializeObject(msg)}.");
                     await SendMessageAsync(msg).ConfigureAwait(false);
                     Interlocked.Exchange(ref _lastUsedTimeTicks, Stopwatch.GetTimestamp());
                 }
                 catch (Exception e)
                 {
+                    _logger.LogDebug($"Connection: {Id} : Request: {msg.RequestId} : Error on send : Exception: {e.Message}");
                     await CloseConnectionBecauseOfFailureAsync(e).ConfigureAwait(false);
                     break;
                 }
