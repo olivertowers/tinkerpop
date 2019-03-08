@@ -26,6 +26,10 @@ using System.IO;
 using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
+using Gremlin.Net.Driver.Exceptions;
+using Gremlin.Net.Process;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gremlin.Net.Driver
 {
@@ -33,13 +37,17 @@ namespace Gremlin.Net.Driver
     {
         private const int ReceiveBufferSize = 1024;
         private const WebSocketMessageType MessageType = WebSocketMessageType.Binary;
+        private readonly ILogger _logger;
         private readonly ClientWebSocket _client;
 
-        public WebSocketConnection(Action<ClientWebSocketOptions> webSocketConfiguration)
+        public WebSocketConnection(Action<ClientWebSocketOptions> webSocketConfiguration, ILogger logger = null)
         {
+            _logger = logger ?? NullLogger.Instance;
             _client = new ClientWebSocket();
             webSocketConfiguration?.Invoke(_client.Options);
         }
+
+        public Guid Id { get; } = Guid.NewGuid();
 
         public async Task ConnectAsync(Uri uri)
         {
@@ -56,9 +64,10 @@ namespace Gremlin.Net.Driver
                     _client.CloseAsync(WebSocketCloseStatus.NormalClosure, string.Empty, CancellationToken.None)
                         .ConfigureAwait(false);
             }
-            catch (Exception)
+            catch (Exception e)
             {
                 // Swallow exceptions silently as there is nothing to do when closing fails
+                _logger.LogDebug($"Connection: {Id} : CloseAsync : WebSocketState: {_client.State}, Exception: {e}");
             }
         }
 
@@ -82,6 +91,11 @@ namespace Gremlin.Net.Driver
                 {
                     var receiveBuffer = new ArraySegment<byte>(new byte[ReceiveBufferSize]);
                     received = await _client.ReceiveAsync(receiveBuffer, CancellationToken.None).ConfigureAwait(false);
+                    if (received.MessageType == WebSocketMessageType.Close)
+                    {
+                        throw new CloseConnectionException(Id, received.CloseStatus, received.CloseStatusDescription);
+                    }
+
                     ms.Write(receiveBuffer.Array, receiveBuffer.Offset, received.Count);
                 } while (!received.EndOfMessage);
 

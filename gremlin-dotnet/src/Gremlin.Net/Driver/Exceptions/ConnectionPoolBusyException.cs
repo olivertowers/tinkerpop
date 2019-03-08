@@ -42,16 +42,17 @@ namespace Gremlin.Net.Driver.Exceptions
         /// <summary>
         ///     Initializes a new instance of the <see cref="ConnectionPoolBusyException" /> class.
         /// </summary>
-        public ConnectionPoolBusyException(int poolSize, int maxInProcessPerConnection)
-            : base(CreateMessage(poolSize, maxInProcessPerConnection))
+        public ConnectionPoolBusyException(int poolSize, int maxInProcessPerConnection, string message)
+            : base(CreateMessage(poolSize, maxInProcessPerConnection, message))
         {
             PoolSize = poolSize;
             MaxInProcessPerConnection = maxInProcessPerConnection;
         }
 
-        private static string CreateMessage(int poolSize, int maxInProcessPerConnection)
+        private static string CreateMessage(int poolSize, int maxInProcessPerConnection, string message)
         {
-            return $"All {poolSize} connections have reached their " +
+            string additionalMessage = message + " ";
+            return $"{message}All {poolSize} connections have reached their " +
                    $"{nameof(ConnectionPoolSettings.MaxInProcessPerConnection)} limit of {maxInProcessPerConnection}." +
                    $" Consider increasing either the {nameof(ConnectionPoolSettings.PoolSize)} or the " +
                    $"{nameof(ConnectionPoolSettings.MaxInProcessPerConnection)} limit.";

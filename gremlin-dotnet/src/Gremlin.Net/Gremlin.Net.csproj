@@ -25,7 +25,7 @@ limitations under the License.
   </PropertyGroup>
 
   <PropertyGroup Label="Package">
-    <Version>3.4.1-SNAPSHOT</Version>
+    <Version>3.4.1-SNAPSHOT-pool-alpha-1</Version>
     <FileVersion>3.4.1.0</FileVersion>
     <AssemblyVersion>3.4.0.0</AssemblyVersion>
     <Title>Gremlin.Net</Title>
@@ -56,12 +56,16 @@ NOTE that versions suffixed with "-rc" are considered release candidates (i.e. p
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="1.0.0-beta2-18618-05" PrivateAssets="All"/>
     <PackageReference Include="Newtonsoft.Json" Version="11.0.2" />
     <PackageReference Include="Microsoft.CSharp" Version="4.3.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="2.1.1" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' == 'netstandard1.3'">
     <PackageReference Include="System.Net.WebSockets" Version="4.3.0" />
     <PackageReference Include="System.Net.WebSockets.Client" Version="4.3.0" />
     <PackageReference Include="System.Reflection.TypeExtensions" Version="4.3.0" />
+    <PackageReference Update="Microsoft.Extensions.Logging">
+      <Version>1.1.2</Version>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>

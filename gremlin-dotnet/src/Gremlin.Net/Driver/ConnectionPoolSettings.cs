@@ -33,8 +33,13 @@ namespace Gremlin.Net.Driver
     {
         private int _poolSize = DefaultPoolSize;
         private int _maxInProcessPerConnection = DefaultMaxInProcessPerConnection;
+        private int _maxSimultaneousUsagePerConnection = DefaultMaxInProcessPerConnection;
+        private TimeSpan _maxWaitForConnection = TimeSpan.FromSeconds(DefaultMaxWaitForConnectionInSeconds);
+        private TimeSpan _reconnectInterval = TimeSpan.FromSeconds(DefaultReconnectIntervalInMilliseconds);
         private const int DefaultPoolSize = 4;
         private const int DefaultMaxInProcessPerConnection = 32;
+        private const int DefaultMaxWaitForConnectionInSeconds = 60;
+        private const int  DefaultReconnectIntervalInMilliseconds = 100;
 
         /// <summary>
         ///     Gets or sets the size of the connection pool.
@@ -69,6 +74,55 @@ namespace Gremlin.Net.Driver
                     throw new ArgumentOutOfRangeException(nameof(MaxInProcessPerConnection),
                         "MaxInProcessPerConnection must be > 0!");
                 _maxInProcessPerConnection = value;
+            }
+        }
+
+        /// <summary>
+        ///     Gets the maximum number of times a connection can be borrowed from the pool simultaneously.
+        /// </summary>
+        /// <remarks>
+        ///     The default value is 32. A <see cref="NoConnectionAvailableException" /> is thrown if this limit is reached on
+        ///     all connections when a new request comes in.
+        /// </remarks>
+        public int MaxSimultaneousUsagePerConnection
+        {
+            get => _maxSimultaneousUsagePerConnection;
+            set
+            {
+                if (value <= 0)
+                    throw new ArgumentOutOfRangeException(nameof(MaxSimultaneousUsagePerConnection),
+                        "Must be > 0!");
+                _maxSimultaneousUsagePerConnection = value;
+            }
+        }
+
+        /// <summary>
+        ///     Gets the amount of time in milliseconds to wait for a new connection before timing out.
+        /// </summary>
+        public TimeSpan MaxWaitForConnection
+        {
+            get => _maxWaitForConnection;
+            set
+            {
+                if (value < TimeSpan.Zero)
+                    throw new ArgumentOutOfRangeException(nameof(MaxWaitForConnection),
+                        "Must be >= 0!");
+                _maxWaitForConnection = value;
+            }
+        }
+
+        /// <summary>
+        ///     Gets the amount of time in milliseconds to wait before trying to reconnect to a dead endpoint.
+        /// </summary>
+        public TimeSpan ReconnectInterval
+        {
+            get => _reconnectInterval;
+            set
+            {
+                if (_reconnectInterval < TimeSpan.Zero)
+                    throw new ArgumentOutOfRangeException(nameof(ReconnectInterval),
+                        "Must be >= 0!");
+                _reconnectInterval = value;
             }
         }
     }

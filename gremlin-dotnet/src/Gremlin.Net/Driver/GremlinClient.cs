@@ -27,6 +27,8 @@ using System.Net.WebSockets;
 using System.Threading.Tasks;
 using Gremlin.Net.Driver.Messages;
 using Gremlin.Net.Structure.IO.GraphSON;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Gremlin.Net.Driver
 {
@@ -46,6 +48,7 @@ namespace Gremlin.Net.Driver
         public const string GraphSON2MimeType = "application/vnd.gremlin-v2.0+json";
         
         private readonly ConnectionPool _connectionPool;
+        private readonly ILogger _logger;
 
         /// <summary>
         ///     Initializes a new instance of the <see cref="GremlinClient" /> class for the specified Gremlin Server.
@@ -59,17 +62,20 @@ namespace Gremlin.Net.Driver
         ///     A delegate that will be invoked with the <see cref="ClientWebSocketOptions" />
         ///     object used to configure WebSocket connections.
         /// </param>
+        /// <param name="logger">An instance of logger.</param>
         public GremlinClient(GremlinServer gremlinServer, GraphSONReader graphSONReader = null,
             GraphSONWriter graphSONWriter = null, string mimeType = null,
             ConnectionPoolSettings connectionPoolSettings = null,
-            Action<ClientWebSocketOptions> webSocketConfiguration = null)
+            Action<ClientWebSocketOptions> webSocketConfiguration = null,
+            ILogger logger = null)
         {
+            _logger = logger ?? NullLogger.Instance;
             var reader = graphSONReader ?? new GraphSON3Reader();
             var writer = graphSONWriter ?? new GraphSON3Writer();
             var connectionFactory = new ConnectionFactory(gremlinServer, reader, writer, mimeType ?? DefaultMimeType,
-                webSocketConfiguration);
+                webSocketConfiguration, _logger);
             _connectionPool =
-                new ConnectionPool(connectionFactory, connectionPoolSettings ?? new ConnectionPoolSettings());            
+                new ConnectionPool(connectionFactory, connectionPoolSettings ?? new ConnectionPoolSettings(), _logger);
         }
 
         /// <summary>
